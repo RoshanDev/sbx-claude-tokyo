@@ -1093,10 +1093,19 @@ sbx exec -u root claude-wsl sh -lc '
 保持 sandbox 常驻运行：
 
 ```bash
+timeout 8s sbx exec -d claude-wsl sh -lc 'sleep infinity' || true
+sbx ls
+```
+
+说明：`sbx exec -d claude-wsl sh -lc 'sleep infinity'` 在当前环境里会让 `claude-wsl` 进入 `running` 状态，并在容器内形成 PID 1 的 `sleep infinity` keeper；但 CLI 客户端有时不会按预期立即返回，所以外层用 `timeout` 包住。即使看到一次 `context canceled`，只要后续 `sbx ls` 显示 `running` 即可。
+
+曾尝试：
+
+```bash
 sbx run --name claude-wsl --detached
 ```
 
-说明：这条命令在当前环境里会让 `claude-wsl` 进入 `running` 状态，并返回 sandbox ID。早先尝试过 `sbx exec -d claude-wsl sh -lc 'sleep infinity'`，但该命令在当前环境里容易挂住当前终端，不作为最终推荐写法。
+该方式会启动 Claude agent，但 agent 退出后 sandbox 仍可能自动停止，图形栈和 noVNC 会一起消失，因此不作为最终保活方式。
 
 启动 Xvfb、openbox、Chrome、x11vnc、noVNC：
 
@@ -1112,12 +1121,13 @@ sbx exec claude-wsl sh -lc '
   rm -f /tmp/sbx-*.log
 '
 
-sbx exec claude-wsl sh -lc '
-  setsid -f Xvfb :99 -screen 0 1280x900x24 -nolisten tcp -ac >/tmp/sbx-xvfb.log 2>&1
+nohup timeout 12s sbx exec -d claude-wsl sh -lc '
+  rm -f /tmp/.X99-lock
+  Xvfb :99 -screen 0 1280x900x24 -nolisten tcp -ac >/tmp/sbx-xvfb.log 2>&1 &
   sleep 1
-  DISPLAY=:99 setsid -f openbox >/tmp/sbx-openbox.log 2>&1
+  DISPLAY=:99 openbox >/tmp/sbx-openbox.log 2>&1 &
   DISPLAY=:99 TZ=Asia/Tokyo LANG=ja_JP.UTF-8 LC_ALL=ja_JP.UTF-8 \
-    setsid -f google-chrome \
+    google-chrome \
       --no-sandbox \
       --disable-dev-shm-usage \
       --no-first-run \
@@ -1125,17 +1135,21 @@ sbx exec claude-wsl sh -lc '
       --lang=ja-JP \
       --user-data-dir="$HOME/.chrome-claude-jp" \
       --window-size=1280,900 \
-      about:blank >/tmp/sbx-chrome.log 2>&1
+      about:blank >/tmp/sbx-chrome.log 2>&1 &
   env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
-    setsid -f x11vnc -display :99 -localhost -nopw -forever -shared -rfbport 5900 >/tmp/sbx-x11vnc.log 2>&1
-  setsid -f websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 >/tmp/sbx-novnc.log 2>&1
-'
+    x11vnc -display :99 -localhost -nopw -forever -shared -rfbport 5900 >/tmp/sbx-x11vnc.log 2>&1 &
+  websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 >/tmp/sbx-novnc.log 2>&1 &
+  wait
+' >/tmp/sbx-claude-tokyo-supervisor.log 2>&1 &
+
+sleep 5
+sbx exec claude-wsl sh -lc 'netstat -ltnp 2>/dev/null | grep -E ":(5900|6080)" || true'
 ```
 
 关键点：
 
 - 清理和启动要分成两个 `sbx exec`。如果同一个 `sh -lc` 同时包含 `pkill` 和后面要启动的 `google-chrome` / `websockify`，`pkill -f` 可能匹配当前 shell 的完整命令行并把自己打掉。
-- 启动阶段要用 `setsid -f`，否则 `nohup ... &` 仍可能随 `sbx exec` 会话退出被清理，noVNC 会表现为 `Failed to connect to server`。
+- 图形栈最终要作为 `sbx exec -d` 的 detached supervisor 启动，并在命令末尾 `wait`。普通 `sbx exec` 中使用 `nohup ... &` 或 `setsid -f` 仍可能在 exec 会话结束后被清理，noVNC 会表现为 `Failed to connect to server`。
 - `x11vnc` 必须去掉 `WAYLAND_DISPLAY` / `XDG_SESSION_TYPE`，否则会误判成 Wayland 会话并退出。
 - `x11vnc` 只监听沙箱内 `localhost:5900`。
 - `websockify` 监听沙箱内 `0.0.0.0:6080`，再代理到 `localhost:5900`。
