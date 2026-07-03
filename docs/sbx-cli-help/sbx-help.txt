@@ -1,0 +1,36 @@
+Docker Sandboxes creates isolated sandbox environments for AI agents, powered by Docker.
+
+Run without a command to launch interactive mode, or pass a command for CLI usage.
+
+Usage:
+  sbx
+  sbx [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  cp          Copy files or directories between a sandbox and the host
+  create      Create a sandbox for an agent
+  diagnose    Diagnose common issues with your sbx installation
+  exec        Execute a command inside a sandbox
+  help        Help about any command
+  kit         (Experimental) Manage kit artifacts
+  login       Sign in to Docker
+  logout      Stop all running sandboxes and sign out of Docker
+  ls          List sandboxes
+  policy      Manage sandbox policies
+  ports       Manage sandbox port publishing
+  reset       Reset all sandboxes and clean up state
+  rm          Remove one or more sandboxes
+  run         Run an agent in a sandbox
+  secret      Manage stored secrets
+  setup       (Experimental) Detect host configuration and prepare Docker Sandboxes
+  stop        Stop one or more sandboxes without removing them
+  template    Manage sandbox templates
+  tui         Open the interactive TUI dashboard
+  version     Show Docker Sandboxes version information
+
+Flags:
+  -D, --debug   Enable debug logging
+  -h, --help    help for sbx
+
+Use "sbx [command] --help" for more information about a command.

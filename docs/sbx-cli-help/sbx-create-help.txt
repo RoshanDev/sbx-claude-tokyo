@@ -1,0 +1,48 @@
+Create a sandbox with access to a host workspace for an agent.
+
+Use "sbx run --name SANDBOX" to attach to the agent after creation.
+
+Usage:
+  sbx create [flags] AGENT PATH [PATH...]
+  sbx create [command]
+
+Examples:
+  # Create a sandbox for Claude in the current directory
+  sbx create claude .
+
+  # Create a sandbox with a custom name
+  sbx create --name my-project claude /path/to/project
+
+  # Create with additional read-only workspaces
+  sbx create claude . /path/to/docs:ro
+
+  # Run the agent on an in-container clone of the host repo, wired back via a git-daemon
+  sbx create --clone claude .
+
+Available Commands:
+  claude         Create a sandbox for claude
+  codex          Create a sandbox for codex
+  copilot        Create a sandbox for copilot
+  cursor         Create a sandbox for cursor
+  docker-agent   Create a sandbox for docker-agent
+  droid          Create a sandbox for droid
+  gemini         Create a sandbox for gemini
+  kiro           Create a sandbox for kiro
+  opencode       Create a sandbox for opencode
+  shell          Create a sandbox for shell
+
+Flags:
+      --clone             Run the agent on a private in-container clone of the host Git repository (mounted read-only) instead of bind-mounting the workspace; the agent's commits are accessible via the sandbox-<name> git remote on the host
+      --cpus int          Number of CPUs to allocate to the sandbox (0 = auto: all host CPUs)
+  -h, --help              help for create
+      --kit strings       (Experimental) Kit reference (directory, ZIP, or OCI). Can be specified multiple times
+  -m, --memory string     Memory limit in binary units (e.g., 1024m, 8g). Default: 50% of host memory, max 32 GiB
+      --name string       Name for the sandbox (default: <agent>-<workdir>, letters, numbers, hyphens, periods, plus signs and minus signs only)
+      --profile string    Governance profile to assign to the sandbox
+  -q, --quiet             Suppress verbose output
+  -t, --template string   Container image to use for the sandbox (default: agent-specific image)
+
+Global Flags:
+  -D, --debug   Enable debug logging
+
+Use "sbx create [command] --help" for more information about a command.

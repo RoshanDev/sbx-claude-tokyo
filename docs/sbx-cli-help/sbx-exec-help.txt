@@ -1,0 +1,31 @@
+Execute a command in a sandbox. If the sandbox is stopped, it is started first.
+
+Flags match the behavior of "docker exec".
+
+Usage:
+  sbx exec [flags] SANDBOX COMMAND [ARG...]
+
+Examples:
+  # Open a shell inside a sandbox
+  sbx exec -it my-sandbox bash
+
+  # Run a command in the background
+  sbx exec -d my-sandbox npm start
+
+  # Run as root
+  sbx exec -u root my-sandbox apt-get update
+
+Flags:
+  -d, --detach                 Detached mode: run command in the background
+      --detach-keys string     Override the key sequence for detaching a container
+  -e, --env stringArray        Set environment variables
+      --env-file stringArray   Read in a file of environment variables
+  -h, --help                   help for exec
+  -i, --interactive            Keep STDIN open even if not attached
+      --privileged             Give extended privileges to the command
+  -t, --tty                    Allocate a pseudo-TTY
+  -u, --user string            Username or UID (format: <name|uid>[:<group|gid>])
+  -w, --workdir string         Working directory inside the container
+
+Global Flags:
+  -D, --debug   Enable debug logging

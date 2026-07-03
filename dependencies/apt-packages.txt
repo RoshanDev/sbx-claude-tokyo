@@ -1,0 +1,16 @@
+# Installed inside the claude-wsl sandbox.
+ca-certificates
+curl
+locales
+fontconfig
+fonts-noto-cjk
+xvfb
+dbus-x11
+x11vnc
+novnc
+websockify
+openbox
+
+# Installed from the official Google .deb URL, not apt's chromium snap wrapper.
+google-chrome-stable
+
