@@ -1600,3 +1600,223 @@ Branch 'master' set up to track remote branch 'master' from 'origin'.
 - Node / Intl：`Asia/Tokyo`、`ja-JP`、`GMT+0900`
 
 没有在本文档中配置或承诺网络出口/IP。使用前仍建议先用本地检查命令确认当前沙箱环境。
+
+## 16. 2026-07-04 追加：把 gh-license-management 加进已有 claude-gh-ceec
+
+### 16.1 目标与约束
+
+新需求：
+
+```text
+/home/roshan/Developer/gh-license-management
+```
+
+也需要让 Claude Code 访问和修改。
+
+用户明确担心：如果为了第二个项目再创建一个新的 Claude sandbox，可能变成同一个 Claude 账号同时出现在多个不同 sandbox/硬件环境里。
+
+因此本次不新建第二个 Claude sandbox，而是复用已经登录且已修正为东京环境的：
+
+```text
+claude-gh-ceec
+```
+
+### 16.2 为什么不能直接给已有 sbx 追加 workspace
+
+`sbx create` 支持多个 workspace，例如：
+
+```bash
+sbx create --name some-sandbox shell /tmp /path/to/extra:ro
+```
+
+它在 runtime spec 中的结构类似：
+
+```json
+{
+  "WorkspaceDir": "/tmp",
+  "AdditionalWorkspaces": [
+    {
+      "dir": "/home/roshan/Developer/gh-license-management",
+      "read_only": true
+    }
+  ]
+}
+```
+
+但用临时 shell sandbox 验证后确认：只手动改已有 runtime JSON，再 stop/start，并不会可靠地让新增 workspace 出现在 sandbox 内部。`sbx` 还有其它持久启动状态，不适合硬改。
+
+结论：不直接修改 `claude-gh-ceec` 的 `sbx` spec。
+
+### 16.3 最终方案：宿主 bind mount 到已有 workspace 内
+
+`claude-gh-ceec` 已经 direct mount：
+
+```text
+/home/roshan/Developer/gh-ceec
+```
+
+所以在宿主 WSL 上，把第二个项目 bind mount 到 `gh-ceec` 下面的本地排除目录：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+  -> /home/roshan/Developer/gh-license-management
+```
+
+这样 Claude 仍然只运行在同一个 `claude-gh-ceec` sandbox 里，不需要新建第二个 Claude sandbox。
+
+### 16.4 实际操作
+
+先把挂载目录加入 `gh-ceec` 的本地 git exclude，避免污染 `gh-ceec` 状态：
+
+```bash
+grep -qxF '.sbx-workspaces/' /home/roshan/Developer/gh-ceec/.git/info/exclude || \
+  printf '\n.sbx-workspaces/\n' >> /home/roshan/Developer/gh-ceec/.git/info/exclude
+```
+
+创建挂载点并执行 bind mount：
+
+```bash
+mkdir -p /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+
+sudo mount --bind \
+  /home/roshan/Developer/gh-license-management \
+  /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+```
+
+确认宿主侧挂载：
+
+```bash
+mountpoint /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+findmnt /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management -o TARGET,SOURCE,FSTYPE,PROPAGATION
+```
+
+实际结果：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management is a mountpoint
+TARGET                                                               SOURCE                                                 FSTYPE PROPAGATION
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management /dev/sdd[/home/roshan/Developer/gh-license-management] ext4   private
+```
+
+### 16.5 必须重启同一个 sandbox 才能看到嵌套 mount
+
+在 `claude-gh-ceec` 已经运行的情况下，刚建好的宿主 bind mount 不会立刻出现在 sandbox 里。第一次检查时 sandbox 内该目录为空。
+
+处理方式：停掉 tmux 会话并重启同一个 sandbox：
+
+```bash
+tmux kill-session -t claude-gh-ceec 2>/dev/null || true
+sbx stop claude-gh-ceec
+```
+
+再用 `sbx exec` 启动同一个 sandbox 并检查：
+
+```bash
+sbx exec claude-gh-ceec sh -lc '
+  ls -la /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management | sed -n "1,40p"
+  git -C /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management rev-parse --show-toplevel
+  git -C /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management status -sb | sed -n "1,40p"
+'
+```
+
+实际确认：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+## master...origin/master
+ M Makefile
+ M README.md
+ M docs/license-solution-design.md
+ M license-center/backend/Makefile
+ M license-center/backend/README.md
+ M license-center/backend/configs/config.local.yaml
+ M license-center/backend/docs/openapi.yaml
+ M license-center/backend/internal/store/mysql_store.go
+ M license-center/frontend/README.md
+ M license-center/frontend/vite.config.ts
+ M sdk/go/README.md
+ M sdk/java/src/demo/java/com/ghlicense/demo/AgentDemoServer.java
+?? license-center/backend/internal/store/mysql_store_test.go
+```
+
+说明：
+
+- sandbox 内看到的是 `gh-license-management` 的真实 git 仓库。
+- 这些变更是 `gh-license-management` 自己已有的工作树状态，不属于 `gh-ceec`。
+- `gh-ceec` 本地状态仍保持干净：
+
+```text
+## master...origin/master
+```
+
+### 16.6 东京环境和登录态复查
+
+重启同一个 `claude-gh-ceec` 后，复查本地环境：
+
+```bash
+sbx exec claude-gh-ceec sh -lc 'date; node -e "const r=Intl.DateTimeFormat().resolvedOptions(); console.log(JSON.stringify({timeZone:r.timeZone,locale:r.locale,offsetMinutes:new Date().getTimezoneOffset()}))"'
+```
+
+实际结果：
+
+```text
+2026年 7月  4日 土曜日 00:02:18 JST
+{"timeZone":"Asia/Tokyo","locale":"ja-JP","offsetMinutes":-540}
+```
+
+Claude 登录态仍为已登录，文档只保留必要字段：
+
+```json
+{
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "subscriptionType": "pro"
+}
+```
+
+### 16.7 恢复实时 Claude Code 会话
+
+确认同一个 sandbox 里两个项目都可见、东京环境仍正确后，再开 tmux：
+
+```bash
+tmux new-session -d -s claude-gh-ceec 'cd /home/roshan/Developer/gh-ceec && sbx run --name claude-gh-ceec'
+```
+
+查看实时输出并对话：
+
+```bash
+tmux attach -t claude-gh-ceec
+```
+
+在 Claude Code 里访问第二个项目时，路径是：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+```
+
+### 16.8 重启后的注意事项
+
+这个 bind mount 是宿主 WSL 的运行时挂载。WSL 重启后可能消失，需要重新执行：
+
+```bash
+mkdir -p /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+sudo mount --bind \
+  /home/roshan/Developer/gh-license-management \
+  /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+tmux kill-session -t claude-gh-ceec 2>/dev/null || true
+sbx stop claude-gh-ceec
+```
+
+然后再重新 attach：
+
+```bash
+tmux new-session -d -s claude-gh-ceec 'cd /home/roshan/Developer/gh-ceec && sbx run --name claude-gh-ceec'
+tmux attach -t claude-gh-ceec
+```
+
+边界：
+
+- 这不是 `sbx ls` 里会显示的 `AdditionalWorkspaces`。
+- 这是宿主文件系统层面的嵌套 bind mount。
+- 好处是复用同一个 `claude-gh-ceec`，不增加新的 Claude sandbox 登录环境。

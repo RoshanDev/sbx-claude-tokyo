@@ -103,6 +103,26 @@ sbx exec -it -w /home/roshan/Developer/gh-ceec claude-gh-ceec bash
 
 `claude-gh-ceec` 是 direct mount，Claude 在沙箱内修改的就是 WSL2 本地 `gh-ceec` 工作树。
 
+`gh-license-management` 没有新建第二个 Claude sandbox，而是通过宿主 WSL bind mount 放进同一个 `claude-gh-ceec`：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+  -> /home/roshan/Developer/gh-license-management
+```
+
+WSL 重启后如果 mount 消失，重新执行：
+
+```bash
+mkdir -p /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+grep -qxF '.sbx-workspaces/' /home/roshan/Developer/gh-ceec/.git/info/exclude || \
+  printf '\n.sbx-workspaces/\n' >> /home/roshan/Developer/gh-ceec/.git/info/exclude
+sudo mount --bind /home/roshan/Developer/gh-license-management \
+  /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+tmux kill-session -t claude-gh-ceec 2>/dev/null || true
+sbx stop claude-gh-ceec
+sbx exec claude-gh-ceec sh -lc 'ls /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management | sed -n "1,20p"'
+```
+
 注意：第一次创建 `claude-gh-ceec` 后曾发现它是 `UTC/POSIX`，不是东京环境；已停止当时的 tmux 会话，写入 `/etc/sandbox-persistent.sh`、`/etc/localtime`、`/etc/timezone` 并重启验证。后续使用前可快速检查：
 
 ```bash
