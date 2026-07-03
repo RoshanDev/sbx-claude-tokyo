@@ -22,12 +22,14 @@
 - `sbx create shell /tmp` 已成功
 - `sbx create --name claude-wsl claude /home/roshan/sbx-claude-workspace` 已成功
 - `sbx exec claude-wsl sh -lc 'command -v claude && claude --version'` 已成功，沙箱内 `Claude Code` 可启动
+- `sbx exec claude-wsl sh -lc 'claude auth status --json'` 已确认 Claude Code 已登录
 - 宿主机侧 `sbx` 已通过 `~/.local/bin/sbx` 包装脚本默认绕开 WSL 的 Secret Service / D-Bus 卡顿问题
 
-当前会话里，`sbx` 控制面和 `Claude` 模板运行面都已经验证通过，但还剩一个需要人工完成的业务动作：
+当前会话里，`sbx` 控制面、`Claude` 模板运行面和 Claude Code 登录状态都已经验证通过：
 
-- 沙箱里的 `claude -p "Reply with OK only."` 当前会返回 `Not logged in · Please run /login`
-- 因此 `Claude Code` 已经进沙箱并可执行，但首次使用仍需在沙箱内完成一次 `claude auth login`，或者后续按官方方式注入 `CLAUDE_CODE_OAUTH_TOKEN`
+- `claude-wsl` 内 `claude auth status --json` 返回 `loggedIn: true`
+- 登录方式为 `claude.ai`，订阅状态为 `pro`
+- 实际登录路径是 `sbx` 终端打印 URL，移动端 iOS Safari 无痕模式登录，再把网页给出的 code 粘回终端
 
 说明：当前这套修复不是官方一键无脑安装态，实际包含三层兼容处理：
 
@@ -936,17 +938,18 @@ sbx exec claude-wsl sh -lc 'claude auth status --json'
 
 ```json
 {
-  "loggedIn": false,
-  "authMethod": "none",
-  "apiProvider": "firstParty"
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "subscriptionType": "pro"
 }
 ```
 
 说明：
 
 - `claude-wsl` 内 Claude Code 已安装并初始化过配置目录。
-- 当前还没有登录 Claude 订阅账号。
-- 订阅账号需要通过 `claude auth login --claudeai` 登录同一个 Claude.ai 账号。
+- Claude 订阅账号已经登录成功。
+- 文档中不记录邮箱、组织 ID 等账号细节；本次只保留 `loggedIn`、登录方式和订阅类型这些排障必需字段。
 
 ### 14.3 沙箱内东京环境核验
 
@@ -1210,7 +1213,7 @@ hostname -I
 
 再用新的 IP 访问。
 
-### 14.8 使用沙箱内 Chrome 完成 Claude 登录
+### 14.8 实际完成的 Claude 登录流程：iOS Safari 无痕 + code
 
 登录命令：
 
@@ -1227,17 +1230,82 @@ sbx exec -it -e SBX_NO_DISPLAY=1 claude-wsl sh -lc 'claude auth login --claudeai
 
 1. 在终端运行上面的 `claude auth login --claudeai`。
 2. 复制终端打印的登录 URL。
-3. 打开 noVNC 页面。
-4. 把登录 URL 粘到 noVNC 里的沙箱内 Chrome 地址栏。
+3. 没有使用 noVNC，也没有使用宿主机 Chrome。
+4. 在移动端 iOS Safari 无痕模式打开该 URL。
 5. 用同一个 Claude.ai 订阅账号登录。
-6. 如果网页给出 code，把 code 粘回终端提示。
-7. 登录后检查：
+6. 如果网页给出 code，把 code 粘回终端提示：
+
+```text
+Paste code here if prompted >
+```
+
+7. 终端显示：
+
+```text
+Login successful.
+```
+
+8. 登录后检查：
 
 ```bash
 sbx exec claude-wsl sh -lc 'claude auth status --json'
 ```
 
-### 14.9 安全与清理
+本次检查结果已经变为：
+
+```json
+{
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "subscriptionType": "pro"
+}
+```
+
+结论：
+
+- 这次真正走通的是 `sbx` CLI 打印 URL、移动端 Safari 无痕登录、code 回填终端。
+- noVNC/沙箱内 Chrome 没有参与最终登录，只保留为可选的沙箱内浏览器诊断路径。
+- Claude 登录态保存在 `claude-wsl` 沙箱用户环境里，后续不需要每次重新登录。
+
+### 14.9 正常使用 Claude Code
+
+从 Windows Terminal 打开 Ubuntu/WSL 后，推荐直接重新附着到已有沙箱：
+
+```bash
+sbx run --name claude-wsl
+```
+
+这会读取 `claude-wsl` 现有 spec，并启动该 sandbox 的 Claude agent。它不是“一次只执行一条命令”的模式，而是正常的 Claude Code 交互会话。
+
+如果要进入沙箱 shell，再手动运行 Claude：
+
+```bash
+sbx exec -it -w /home/roshan/sbx-claude-workspace claude-wsl bash
+claude
+```
+
+如果只是临时检查状态或跑单条命令，继续用 `sbx exec`：
+
+```bash
+sbx exec claude-wsl sh -lc 'claude auth status --json'
+sbx exec claude-wsl sh -lc 'claude --version'
+```
+
+需要把参数透传给 Claude agent 时，用 `--` 分隔：
+
+```bash
+sbx run --name claude-wsl -- --continue
+```
+
+可选的本机快捷 alias：
+
+```bash
+alias claude-sbx='sbx run --name claude-wsl'
+alias claude-sbx-shell='sbx exec -it -w /home/roshan/sbx-claude-workspace claude-wsl bash'
+```
+
+### 14.10 安全与清理
 
 当前 noVNC 没有设置密码，并且发布到了 `0.0.0.0:6080`。这适合本机临时登录，不适合长期暴露。
 
@@ -1247,7 +1315,13 @@ sbx exec claude-wsl sh -lc 'claude auth status --json'
 sbx ports claude-wsl --unpublish 0.0.0.0:6080:6080/tcp4
 ```
 
-或停止 noVNC 相关进程：
+或用本仓库脚本关闭 noVNC supervisor、端口和相关进程：
+
+```bash
+./scripts/stop-claude-tokyo-novnc.sh claude-wsl
+```
+
+也可以手动停止 noVNC 相关进程：
 
 ```bash
 sbx exec claude-wsl sh -lc '
@@ -1262,7 +1336,16 @@ sbx exec claude-wsl sh -lc '
 sbx stop claude-wsl
 ```
 
-### 14.10 本次新增参考链接
+本次已执行清理：
+
+```bash
+./scripts/stop-claude-tokyo-novnc.sh claude-wsl
+sbx ports claude-wsl --json
+```
+
+确认 `sbx ports claude-wsl --json` 返回空数组 `[]`，`tmux` 中也不再有 `sbx-claude-novnc` 会话。
+
+### 14.11 本次新增参考链接
 
 - Docker Sandboxes get started：<https://docs.docker.com/ai/sandboxes/get-started/>
 - Docker `sbx` CLI reference：<https://docs.docker.com/reference/cli/sbx/>
