@@ -1093,11 +1093,12 @@ sbx exec -u root claude-wsl sh -lc '
 保持 sandbox 常驻运行：
 
 ```bash
-timeout 8s sbx exec -d claude-wsl sh -lc 'sleep infinity' || true
+tmux new-session -d -s sbx-claude-keeper "sbx exec -it claude-wsl sh -lc 'sleep infinity'"
+sleep 5
 sbx ls
 ```
 
-说明：`sbx exec -d claude-wsl sh -lc 'sleep infinity'` 在当前环境里会让 `claude-wsl` 进入 `running` 状态，并在容器内形成 PID 1 的 `sleep infinity` keeper；但 CLI 客户端有时不会按预期立即返回，所以外层用 `timeout` 包住。即使看到一次 `context canceled`，只要后续 `sbx ls` 显示 `running` 即可。
+说明：这里刻意使用普通 `sbx exec -it`，并用宿主侧 `tmux` 保留这个 TTY 会话。不要用 `timeout` 包住 keeper；不要依赖只在沙箱内部 `nohup` 的进程；也不要假设 `sbx exec -d` 客户端退出后 sandbox 一定继续保持。
 
 曾尝试：
 
@@ -1121,7 +1122,9 @@ sbx exec claude-wsl sh -lc '
   rm -f /tmp/sbx-*.log
 '
 
-nohup timeout 12s sbx exec -d claude-wsl sh -lc '
+tmux kill-session -t sbx-claude-novnc 2>/dev/null || true
+
+tmux new-session -d -s sbx-claude-novnc "sbx exec -it claude-wsl sh -lc '
   rm -f /tmp/.X99-lock
   Xvfb :99 -screen 0 1280x900x24 -nolisten tcp -ac >/tmp/sbx-xvfb.log 2>&1 &
   sleep 1
@@ -1139,17 +1142,17 @@ nohup timeout 12s sbx exec -d claude-wsl sh -lc '
   env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
     x11vnc -display :99 -localhost -nopw -forever -shared -rfbport 5900 >/tmp/sbx-x11vnc.log 2>&1 &
   websockify --web=/usr/share/novnc 0.0.0.0:6080 localhost:5900 >/tmp/sbx-novnc.log 2>&1 &
-  wait
-' >/tmp/sbx-claude-tokyo-supervisor.log 2>&1 &
+  tail -f /dev/null
+'"
 
-sleep 5
+sleep 8
 sbx exec claude-wsl sh -lc 'netstat -ltnp 2>/dev/null | grep -E ":(5900|6080)" || true'
 ```
 
 关键点：
 
 - 清理和启动要分成两个 `sbx exec`。如果同一个 `sh -lc` 同时包含 `pkill` 和后面要启动的 `google-chrome` / `websockify`，`pkill -f` 可能匹配当前 shell 的完整命令行并把自己打掉。
-- 图形栈最终要作为 `sbx exec -d` 的 detached supervisor 启动，并在命令末尾 `wait`。普通 `sbx exec` 中使用 `nohup ... &` 或 `setsid -f` 仍可能在 exec 会话结束后被清理，noVNC 会表现为 `Failed to connect to server`。
+- 图形栈最终要作为宿主侧 `tmux` 托管的普通 `sbx exec -it` supervisor 启动。supervisor 命令末尾使用前台 `tail -f /dev/null` 保活，不依赖 `wait`。只在沙箱内部使用 `nohup ... &` 或 `setsid -f` 不够稳定，普通 exec 结束后图形进程仍可能被清理；`sbx exec -d` 客户端退出后 sandbox 也可能停止，noVNC 会表现为 `Failed to connect to server`。
 - `x11vnc` 必须去掉 `WAYLAND_DISPLAY` / `XDG_SESSION_TYPE`，否则会误判成 Wayland 会话并退出。
 - `x11vnc` 只监听沙箱内 `localhost:5900`。
 - `websockify` 监听沙箱内 `0.0.0.0:6080`，再代理到 `localhost:5900`。

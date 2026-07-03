@@ -37,6 +37,8 @@ Windows Chrome -> WSL IP:6080 -> sbx port publish -> claude-wsl:6080 -> websocki
 ./scripts/start-claude-tokyo-novnc.sh claude-wsl
 ```
 
+启动脚本会创建宿主侧 `tmux` 会话 `sbx-claude-novnc` 来保留 `sbx exec -it`，否则 Docker Sandboxes 可能在 exec 客户端退出后停止沙箱。
+
 脚本会输出类似：
 
 ```text
@@ -94,4 +96,3 @@ sbx stop claude-wsl
 - `dependencies/google-chrome-deb.url`：Chrome `.deb` 下载地址。
 - `docs/references.md`：官方文档和本次参考链接。
 - `scripts/`：可重复执行的安装、启动、停止脚本。
-
