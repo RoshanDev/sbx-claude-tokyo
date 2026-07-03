@@ -1743,10 +1743,17 @@ sbx exec claude-gh-ceec sh -lc '
 
 - sandbox 内看到的是 `gh-license-management` 的真实 git 仓库。
 - 这些变更是 `gh-license-management` 自己已有的工作树状态，不属于 `gh-ceec`。
-- `gh-ceec` 本地状态仍保持干净：
+- `.sbx-workspaces/` 已写入 `gh-ceec/.git/info/exclude`，所以 bind mount 本身不会作为 `gh-ceec` 的未跟踪目录出现：
 
 ```text
-## master...origin/master
+.git/info/exclude:7:.sbx-workspaces/ .sbx-workspaces/gh-license-management/README.md
+```
+
+后续复查时，`gh-ceec` 自己出现了两个新的未跟踪 docs 文件，时间戳为 2026-07-03 22:55 +0800，晚于 `d668201` 的提交时间 22:35 +0800；它们不是 `.sbx-workspaces/` bind mount 造成的：
+
+```text
+?? docs/deviations.md
+?? docs/云边端协同容器平台_架构完善与实施方案_V1.0.md
 ```
 
 ### 16.6 东京环境和登录态复查
