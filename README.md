@@ -1,11 +1,12 @@
 # sbx Claude Tokyo
 
-在 WSL2 Ubuntu 环境中，把 Docker Sandboxes 的 `claude-wsl` 沙箱配置成东京时区、本地化 Chrome 以及可直接使用的 Claude Code 运行环境。
+在 WSL2 Ubuntu 环境中，把 Docker Sandboxes 的 Claude 沙箱配置成东京时区、本地化环境以及可直接使用的 Claude Code 运行环境。
 
-这个仓库记录三件事：
+这个仓库记录这些事：
 
 - `sbx` 在 WSL Ubuntu 上安装、排障、创建 `claude-wsl` 的过程。
 - `claude-wsl` 内 Claude Code 的登录与日常使用方式。
+- `claude-gh-ceec` 挂载 `/home/roshan/Developer/gh-ceec` 后的东京环境修复和实时 tmux 使用方式。
 - 可选的 Chrome + noVNC 图形栈，用于沙箱内浏览器检查或备用网页登录。
 
 > 说明：这里是本地化、隔离运行和可视化排障环境记录，不用于规避服务条款、地区限制或服务端风控。
@@ -25,6 +26,18 @@ Claude Code 登录状态已确认：
 ```
 
 实际登录方式不是 noVNC：登录命令在 `sbx` 终端打印 URL，移动端 iOS Safari 无痕模式打开 URL 完成账号登录，再把网页给出的 code 粘回终端，提示 `Login successful`。
+
+当前用于 `gh-ceec` 项目的沙箱：
+
+```text
+claude-gh-ceec -> /home/roshan/Developer/gh-ceec
+```
+
+`claude-gh-ceec` 已修正为东京持久环境：
+
+```json
+{"timeZone":"Asia/Tokyo","locale":"ja-JP","offsetMinutes":-540}
+```
 
 ## 正常使用 Claude Code
 
@@ -53,6 +66,47 @@ sbx exec claude-wsl sh -lc 'claude auth status --json'
 
 ```bash
 sbx run --name claude-wsl -- --continue
+```
+
+## gh-ceec 项目沙箱
+
+`gh-ceec` 使用单独的 sandbox，不复用 `claude-wsl`，因为 `sbx` 的 workspace 是创建 sandbox 时绑定的：
+
+```bash
+sbx create --name claude-gh-ceec claude /home/roshan/Developer/gh-ceec
+```
+
+实时查看 Claude Code 输出并对话：
+
+```bash
+tmux attach -t claude-gh-ceec
+```
+
+从 tmux 里脱离但不停止会话：
+
+```text
+Ctrl-b d
+```
+
+如果要手动重开这个实时会话：
+
+```bash
+tmux kill-session -t claude-gh-ceec 2>/dev/null || true
+tmux new-session -d -s claude-gh-ceec 'cd /home/roshan/Developer/gh-ceec && sbx run --name claude-gh-ceec'
+```
+
+进入沙箱 shell：
+
+```bash
+sbx exec -it -w /home/roshan/Developer/gh-ceec claude-gh-ceec bash
+```
+
+`claude-gh-ceec` 是 direct mount，Claude 在沙箱内修改的就是 WSL2 本地 `gh-ceec` 工作树。
+
+注意：第一次创建 `claude-gh-ceec` 后曾发现它是 `UTC/POSIX`，不是东京环境；已停止当时的 tmux 会话，写入 `/etc/sandbox-persistent.sh`、`/etc/localtime`、`/etc/timezone` 并重启验证。后续使用前可快速检查：
+
+```bash
+sbx exec claude-gh-ceec sh -lc 'date; node -e "console.log(Intl.DateTimeFormat().resolvedOptions())"'
 ```
 
 ## Claude 登录流程
@@ -123,7 +177,7 @@ sbx stop claude-wsl
 
 ## 仓库内容
 
-- `docs/sbx-安装部署记录-WSL-Ubuntu22.04.md`：完整安装、排障和本次 Claude 登录记录。
+- `docs/sbx-安装部署记录-WSL-Ubuntu22.04.md`：完整安装、排障、Claude 登录和 `gh-ceec` 沙箱记录。
 - `docs/sbx-cli-help/`：本次采集的 `sbx` CLI 帮助输出。
 - `dependencies/apt-packages.txt`：沙箱内安装依赖清单。
 - `dependencies/google-chrome-deb.url`：Chrome `.deb` 下载地址。

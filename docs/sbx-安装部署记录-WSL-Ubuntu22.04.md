@@ -1355,3 +1355,248 @@ sbx ports claude-wsl --json
 - Claude Code quickstart：<https://docs.anthropic.com/en/docs/claude-code/quickstart>
 - 用户提供的浏览器环境检测项目：<https://github.com/LinXiaoTao/FuckClaude>
 - 用户提供的本地浏览器环境检测页：<https://damn-claude.jay6697117.deno.net/zh/>
+
+## 15. 2026-07-03 追加：为 gh-ceec 创建 claude-gh-ceec 沙箱
+
+### 15.1 目标
+
+让 `claude-gh-ceec` 直接挂载 WSL2 本地项目：
+
+```text
+/home/roshan/Developer/gh-ceec
+```
+
+要求：
+
+- Claude Code 在 sbx 内可以直接读写 `gh-ceec`。
+- WSL/Windows 侧可以实时看到同一个工作树变化。
+- 用户可以通过 `tmux` 实时查看 Claude Code 输出并继续对话。
+- 新沙箱必须和 `claude-wsl` 一样使用东京本地环境。
+
+### 15.2 创建项目沙箱
+
+`sbx` 的 workspace 是创建 sandbox 时绑定的，已有 `claude-wsl` 只挂载了：
+
+```text
+/home/roshan/sbx-claude-workspace
+```
+
+因此为 `gh-ceec` 单独创建沙箱：
+
+```bash
+sbx create --name claude-gh-ceec claude /home/roshan/Developer/gh-ceec
+```
+
+实际结果：
+
+```text
+✓ Created sandbox 'claude-gh-ceec'
+  Workspace: /home/roshan/Developer/gh-ceec (direct mount)
+  Agent: claude
+```
+
+### 15.3 复制 Claude 登录态
+
+从已经登录成功的 `claude-wsl` 复制 Claude 配置目录到新沙箱：
+
+```bash
+sbx exec claude-wsl sh -lc 'tar -C "$HOME" -cf - .claude' \
+  | sbx exec -i claude-gh-ceec sh -lc 'tar -C "$HOME" -xf -'
+```
+
+验证：
+
+```bash
+sbx exec claude-gh-ceec sh -lc 'claude auth status --json'
+```
+
+文档中只保留必要字段：
+
+```json
+{
+  "loggedIn": true,
+  "authMethod": "claude.ai",
+  "apiProvider": "firstParty",
+  "subscriptionType": "pro"
+}
+```
+
+### 15.4 发现并修正东京环境遗漏
+
+第一次创建 `claude-gh-ceec` 后，曾直接开过宿主侧 tmux 会话：
+
+```bash
+tmux new-session -d -s claude-gh-ceec 'cd /home/roshan/Developer/gh-ceec && sbx run --name claude-gh-ceec'
+```
+
+随后检查发现该新沙箱不是东京环境：
+
+```text
+date=Fri Jul  3 14:39:49 UTC 2026
+TZ=
+localtime=/usr/share/zoneinfo/Etc/UTC
+LANG= LC_ALL=
+LC_CTYPE="POSIX"
+```
+
+Node / Intl 视角也不对：
+
+```json
+{
+  "timeZone": "UTC",
+  "locale": "en-US",
+  "offsetMinutes": 0
+}
+```
+
+处理方式：先停止当时的 Claude Code tmux 会话，避免继续使用 UTC/POSIX 环境：
+
+```bash
+tmux kill-session -t claude-gh-ceec 2>/dev/null || true
+```
+
+然后写入持久东京环境。关键点是 `claude-wsl` 的 `TZ=Asia/Tokyo` 来自 `/etc/sandbox-persistent.sh`，所以 `claude-gh-ceec` 也要写同样的持久配置，而不是只在单条命令前临时加 env。
+
+```bash
+sbx exec -u root claude-gh-ceec sh -lc '
+set -e
+ln -snf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
+echo Asia/Tokyo >/etc/timezone
+if ! command -v locale-gen >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y locales
+fi
+if ! locale -a | grep -qi "^ja_JP\.utf8$"; then
+  sed -i "s/^# *ja_JP.UTF-8 UTF-8/ja_JP.UTF-8 UTF-8/" /etc/locale.gen || true
+  sed -i "s/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/" /etc/locale.gen || true
+  locale-gen ja_JP.UTF-8 en_US.UTF-8
+fi
+cat >/etc/sandbox-persistent.sh <<EOF
+export TZ=Asia/Tokyo
+export LANG=ja_JP.UTF-8
+export LC_ALL=ja_JP.UTF-8
+EOF
+chmod 0644 /etc/sandbox-persistent.sh
+cat >/etc/default/locale <<EOF
+LANG=ja_JP.UTF-8
+LC_ALL=ja_JP.UTF-8
+EOF
+'
+```
+
+重启沙箱并验证：
+
+```bash
+sbx stop claude-gh-ceec
+sbx exec claude-gh-ceec sh -lc 'date; printf "TZ=%s LANG=%s LC_ALL=%s\n" "$TZ" "$LANG" "$LC_ALL"; readlink /etc/localtime; cat /etc/timezone'
+```
+
+实际结果：
+
+```text
+2026年 7月  3日 金曜日 23:41:59 JST
+TZ=Asia/Tokyo LANG=ja_JP.UTF-8 LC_ALL=ja_JP.UTF-8
+/usr/share/zoneinfo/Asia/Tokyo
+Asia/Tokyo
+```
+
+Node / Intl 复查：
+
+```bash
+sbx exec claude-gh-ceec sh -lc 'node -e "const r=Intl.DateTimeFormat().resolvedOptions(); console.log(JSON.stringify({timeZone:r.timeZone,locale:r.locale,offsetMinutes:new Date().getTimezoneOffset(),date:new Date().toString()}, null, 2))"'
+```
+
+实际结果：
+
+```json
+{
+  "timeZone": "Asia/Tokyo",
+  "locale": "ja-JP",
+  "offsetMinutes": -540,
+  "date": "Fri Jul 03 2026 23:42:13 GMT+0900 (日本標準時)"
+}
+```
+
+结论：
+
+- `claude-gh-ceec` 初始确实是 UTC/POSIX，不能直接使用。
+- 已停止初始 tmux 会话。
+- 已写入系统时区、locale 和 `/etc/sandbox-persistent.sh`。
+- 重启后 `date`、`TZ`、`LANG`、`LC_ALL`、`/etc/localtime`、Node/Intl 均为东京环境。
+
+### 15.5 正常使用 claude-gh-ceec
+
+重新开实时 Claude Code 会话：
+
+```bash
+tmux kill-session -t claude-gh-ceec 2>/dev/null || true
+tmux new-session -d -s claude-gh-ceec 'cd /home/roshan/Developer/gh-ceec && sbx run --name claude-gh-ceec'
+```
+
+实时查看输出并对话：
+
+```bash
+tmux attach -t claude-gh-ceec
+```
+
+从 tmux 里脱离但不停止 Claude Code：
+
+```text
+Ctrl-b d
+```
+
+进入沙箱 shell：
+
+```bash
+sbx exec -it -w /home/roshan/Developer/gh-ceec claude-gh-ceec bash
+```
+
+一次性检查：
+
+```bash
+sbx exec claude-gh-ceec sh -lc 'date; claude auth status --json'
+```
+
+### 15.6 gh-ceec Git 推送记录
+
+`gh-ceec` 当前有这些 remote：
+
+```text
+origin     git@192.168.9.11:fanghui/gh-ceec.git
+ctu-origin ssh://git@192.168.10.11:222/gh_go/gh-ceec.git
+github     https://github.com/RoshanDev/gh-ceec.git
+```
+
+本次按“推内网远端”的要求推到 `origin`，没有推 GitHub。
+
+提交：
+
+```text
+d668201 Update CEEC LLD 0.16 artifacts
+```
+
+推送结果：
+
+```text
+To 192.168.9.11:fanghui/gh-ceec.git
+   154bf7f..d668201  master -> master
+Branch 'master' set up to track remote branch 'master' from 'origin'.
+```
+
+当前状态：
+
+```text
+## master...origin/master
+```
+
+### 15.7 边界说明
+
+这里修正的是 `claude-gh-ceec` 沙箱内的本地环境信号：
+
+- 系统时区：`Asia/Tokyo`
+- `TZ=Asia/Tokyo`
+- `LANG=ja_JP.UTF-8`
+- `LC_ALL=ja_JP.UTF-8`
+- Node / Intl：`Asia/Tokyo`、`ja-JP`、`GMT+0900`
+
+没有在本文档中配置或承诺网络出口/IP。使用前仍建议先用本地检查命令确认当前沙箱环境。
