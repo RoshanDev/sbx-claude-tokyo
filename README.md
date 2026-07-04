@@ -110,18 +110,118 @@ sbx exec -it -w /home/roshan/Developer/gh-ceec claude-gh-ceec bash
   -> /home/roshan/Developer/gh-license-management
 ```
 
+`~/Developer/skills` 也通过同样方式放进同一个 sandbox：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/skills
+  -> /home/roshan/Developer/skills
+```
+
+`~/Developer/gsstack-container` 同样放进同一个 sandbox：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gsstack-container
+  -> /home/roshan/Developer/gsstack-container
+```
+
 WSL 重启后如果 mount 消失，重新执行：
 
 ```bash
 mkdir -p /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+mkdir -p /home/roshan/Developer/gh-ceec/.sbx-workspaces/skills
+mkdir -p /home/roshan/Developer/gh-ceec/.sbx-workspaces/gsstack-container
 grep -qxF '.sbx-workspaces/' /home/roshan/Developer/gh-ceec/.git/info/exclude || \
   printf '\n.sbx-workspaces/\n' >> /home/roshan/Developer/gh-ceec/.git/info/exclude
 sudo mount --bind /home/roshan/Developer/gh-license-management \
   /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+sudo mount --bind /home/roshan/Developer/skills \
+  /home/roshan/Developer/gh-ceec/.sbx-workspaces/skills
+sudo mount --bind /home/roshan/Developer/gsstack-container \
+  /home/roshan/Developer/gh-ceec/.sbx-workspaces/gsstack-container
 tmux kill-session -t claude-gh-ceec 2>/dev/null || true
 sbx stop claude-gh-ceec
 sbx exec claude-gh-ceec sh -lc 'ls /home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management | sed -n "1,20p"'
+sbx exec claude-gh-ceec sh -lc 'ls /home/roshan/Developer/gh-ceec/.sbx-workspaces/skills | sed -n "1,20p"'
+sbx exec claude-gh-ceec sh -lc 'ls /home/roshan/Developer/gh-ceec/.sbx-workspaces/gsstack-container | sed -n "1,20p"'
 ```
+
+## 关机与重启恢复
+
+关机前不强制要求手动关闭 `sbx`；Windows/WSL 关机时进程会被结束，沙箱状态和 direct mount 的项目文件仍在磁盘上。更稳妥的做法是先优雅停止当前交互会话、noVNC 端口和 `sandboxd`：
+
+```bash
+make shutdown
+```
+
+这个目标会停止：
+
+- 可选的 `claude-wsl` noVNC supervisor 和端口；
+- `claude-gh-ceec` 的宿主侧 tmux 会话；
+- `claude-gh-ceec` / `claude-wsl` sandbox；
+- 宿主侧 `sandboxd` daemon。
+
+重启 WSL/Windows 后，`gh-license-management` 的宿主 bind mount 可能消失，tmux 会话也不会自动回来。恢复当前项目工作面：
+
+```bash
+make recover
+make attach
+```
+
+`make recover` 会重新建立：
+
+```text
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gh-license-management
+  -> /home/roshan/Developer/gh-license-management
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/skills
+  -> /home/roshan/Developer/skills
+/home/roshan/Developer/gh-ceec/.sbx-workspaces/gsstack-container
+  -> /home/roshan/Developer/gsstack-container
+```
+
+然后重启同一个 `claude-gh-ceec` sandbox 的 tmux 会话。恢复过程中如果 bind mount 已经存在，会直接复用；如果不存在，会调用 `sudo mount --bind`。
+
+常用检查：
+
+```bash
+make status
+make dirty
+make env-check
+make lan-check
+make wsl-check
+```
+
+`claude-gh-ceec` 需要访问内网时，要有 sandbox-scoped network policy：
+
+```bash
+make allow-lan
+```
+
+当前默认放行：
+
+```text
+192.168.8.0/24
+192.168.9.0/24
+192.168.10.0/24
+192.168.11.0/24
+192.168.12.0/24
+192.168.110.0/24
+```
+
+需要手动登录 `192.168.11.42` 时，从沙箱内执行：
+
+```bash
+sbx exec -it claude-gh-ceec ssh root@192.168.11.42
+```
+
+本仓库只记录网络放行和连通性检查，不保存 root 密码。
+
+沙箱访问 WSL2 Ubuntu 宿主侧服务时，优先用 Docker/SBX 提供的稳定宿主别名：
+
+```text
+gateway.docker.internal:<port>
+```
+
+不要优先写死 WSL IP，例如 `172.28.55.163`，因为 WSL 重启后可能变化；另外沙箱内 HTTP 客户端默认配置了 `http_proxy=http://gateway.docker.internal:3128`，直接访问 WSL IP 的 HTTP 请求可能被 sbx policy 代理拦截。`gateway.docker.internal` 已在 `NO_PROXY` 里，会直连宿主服务。
 
 注意：第一次创建 `claude-gh-ceec` 后曾发现它是 `UTC/POSIX`，不是东京环境；已停止当时的 tmux 会话，写入 `/etc/sandbox-persistent.sh`、`/etc/localtime`、`/etc/timezone` 并重启验证。后续使用前可快速检查：
 
@@ -203,3 +303,4 @@ sbx stop claude-wsl
 - `dependencies/google-chrome-deb.url`：Chrome `.deb` 下载地址。
 - `docs/references.md`：官方文档和本次参考链接。
 - `scripts/`：可重复执行的安装、启动、停止脚本。
+- `Makefile`：日常检查、关机停止、WSL 重启后恢复 bind mount 与 tmux 会话。
